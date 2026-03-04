@@ -1,0 +1,16 @@
+domain: tabular
+dataset: covertype
+architecture: mlp
+data_path: data/raw/covertype
+num_classes: 7
+input_dim: 54
+sweep_type: batch_grid
+num_steps: 8000
+fixed_n_star: null
+fixed_lr_star: null
+model_scales: [32, 64, 128, 256, 512, 1024]
+batch_sweep_values: [64, 128, 256, 512, 1024, 2048]
+dataset_sizes: [0.25, 0.50, 1.00]
+optimizer: adam
+weight_decay: 0.0001
+gpu_wattage: 250

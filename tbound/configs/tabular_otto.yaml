@@ -1,0 +1,31 @@
+domain: tabular
+dataset: otto
+data_path: data/raw/otto
+num_classes: 9
+input_dim: 93
+
+dataset_fractions:
+  - 0.25
+  - 0.5
+  - 1.0
+
+sweep_type: model_size
+
+model_scales:
+  hidden_sizes:
+    - 32
+    - 64
+    - 128
+    - 256
+    - 512
+    - 1024
+
+training:
+  epochs: 30
+  batch_size: 128
+  optimizer: adam
+  learning_rate: 0.001
+  weight_decay: 0.0001
+
+energy:
+  gpu_wattage: 250

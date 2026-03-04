@@ -1,0 +1,22 @@
+domain: nlp
+dataset: agnews
+architecture: transformer
+data_path: data/raw/agnews
+tokenizer_path: data/raw/bert-base-uncased
+num_classes: 4
+sweep_type: batch_grid
+num_steps: 5000
+fixed_n_star: null
+fixed_lr_star: null
+model_scales:
+  - [1, 16]
+  - [1, 32]
+  - [2, 64]
+  - [2, 128]
+  - [3, 256]
+  - [4, 512]
+batch_sweep_values: [16, 32, 64, 128, 256, 512]
+dataset_sizes: [0.25, 0.50, 1.00]
+optimizer: adamw
+weight_decay: 0.01
+gpu_wattage: 250

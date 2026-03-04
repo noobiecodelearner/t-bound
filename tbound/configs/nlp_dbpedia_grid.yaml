@@ -1,0 +1,21 @@
+domain: nlp
+dataset: dbpedia
+architecture: transformer
+data_path: data/raw/dbpedia
+tokenizer_path: data/raw/bert-base-uncased
+num_classes: 14
+sweep_type: n_d_lr_grid
+num_steps: 5000
+model_scales:
+  - [1, 16]
+  - [1, 32]
+  - [2, 64]
+  - [2, 128]
+  - [3, 256]
+  - [4, 512]
+dataset_sizes: [0.10, 0.20, 0.35, 0.50, 0.75, 1.00]
+lr_sweep_values: [0.01, 0.003, 0.001, 0.0003, 0.0001, 0.00003]
+fixed_batch: 32
+optimizer: adamw
+weight_decay: 0.01
+gpu_wattage: 250
