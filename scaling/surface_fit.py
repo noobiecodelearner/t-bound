@@ -335,3 +335,134 @@ def solve_chinchilla_frontier(
         "acc_grid_values":    acc_values.tolist(),
         "compute_budget_flops": compute_budget_flops,
     }
+
+
+# ── hierarchical Bayesian model size fit ──────────────────────────────────────
+
+def fit_model_size_hierarchical(
+    params: np.ndarray,
+    accuracies: np.ndarray,
+    prior_alpha_mean: float,
+    prior_alpha_std: float,
+    n_runs: int,
+) -> Dict:
+    """
+    Hierarchical Bayesian fit of Accuracy(N) = a - b·N^(-α).
+
+    Places a Normal prior on α: α ~ Normal(prior_alpha_mean, prior_alpha_std)
+    and fits via penalized least squares. Prior weight decreases as n_runs grows.
+
+    Penalized objective:
+        L(a, b, α) = sum[(acc_i - (a - b·N_i^(-α)))^2]
+                   + lambda · (α - prior_alpha_mean)^2 / prior_alpha_std^2
+
+    Lambda schedule:
+        n_runs = 0   → lambda = 1.0  (fully prior-driven)
+        n_runs = 6+  → lambda = 0.0  (fully data-driven)
+        linear decay between 0 and 6
+
+    Posterior CI on α:
+        Derived analytically from curvature of objective at optimum.
+        sigma_posterior = prior_alpha_std / sqrt(1 + n_runs / 3)
+
+    Args:
+        params:           array of parameter counts (N values)
+        accuracies:       array of best val accuracies at each N
+        prior_alpha_mean: prior mean for α (from prior.csv)
+        prior_alpha_std:  prior std for α (from prior.csv)
+        n_runs:           number of customer runs contributing to fit
+
+    Returns dict with all keys from fit_model_size() plus:
+        prior_alpha_mean, prior_alpha_std, lambda_used,
+        alpha_ci_lower, alpha_ci_upper, sigma_posterior,
+        fit_type = "hierarchical"
+    """
+    from scipy.optimize import minimize
+
+    params     = np.array(params,     dtype=float)
+    accuracies = np.array(accuracies, dtype=float)
+
+    if len(params) < 2:
+        raise ValueError("Need at least 2 points for hierarchical fit.")
+
+    # prior weight: linear decay 1.0 → 0.0 over first 6 runs
+    lam = max(0.0, (6 - n_runs) / 6.0)
+
+    sigma_prior = max(prior_alpha_std, 1e-4)  # avoid division by zero
+
+    def objective(p):
+        a, b, alpha = p
+        if a <= 0 or b <= 0 or alpha <= 0:
+            return 1e10
+        pred      = a - b * np.power(np.maximum(params, 1e-10), -alpha)
+        data_loss = np.sum((accuracies - pred) ** 2)
+        prior_pen = lam * ((alpha - prior_alpha_mean) ** 2) / (sigma_prior ** 2)
+        return data_loss + prior_pen
+
+    # initial guess: use prior alpha, estimate a and b from data
+    a0     = float(np.max(accuracies)) + 0.01
+    b0     = 1.0
+    alpha0 = prior_alpha_mean
+
+    result = minimize(
+        objective,
+        x0=[a0, b0, alpha0],
+        method="Nelder-Mead",
+        options={"maxiter": 10000, "xatol": 1e-6, "fatol": 1e-8},
+    )
+
+    if not result.success:
+        # fallback to standard fit
+        fallback = fit_model_size(params, accuracies)
+        fallback["fit_type"] = "standard_fallback"
+        fallback["prior_alpha_mean"] = prior_alpha_mean
+        fallback["prior_alpha_std"]  = prior_alpha_std
+        fallback["lambda_used"]      = lam
+        return fallback
+
+    a, b, alpha = result.x
+
+    # ensure positivity (Nelder-Mead doesn't enforce bounds)
+    a     = max(a, float(np.max(accuracies)))
+    b     = max(b, 1e-6)
+    alpha = max(alpha, 0.01)
+
+    pred      = _power_law(params, a, b, alpha)
+    residuals = accuracies - pred
+    ss_res    = np.sum(residuals ** 2)
+    ss_tot    = np.sum((accuracies - np.mean(accuracies)) ** 2)
+    r2        = float(1 - ss_res / max(ss_tot, 1e-12))
+    mae       = float(np.mean(np.abs(residuals)))
+    k         = 3
+    n         = len(params)
+    aic       = n * np.log(max(ss_res / n, 1e-12)) + 2 * k
+
+    # posterior sigma on alpha: shrinks as we see more data
+    # sigma_post = sigma_prior / sqrt(1 + n_runs / 3)
+    sigma_post    = sigma_prior / np.sqrt(1 + n_runs / 3.0)
+    alpha_ci_lower = alpha - 1.96 * sigma_post
+    alpha_ci_upper = alpha + 1.96 * sigma_post
+
+    def optimal_n_fn(target_accuracy: float) -> Optional[float]:
+        if target_accuracy >= a:
+            return None
+        return float((b / (a - target_accuracy)) ** (1.0 / alpha))
+
+    return {
+        "alpha":            float(alpha),
+        "a":                float(a),
+        "b":                float(b),
+        "r2":               r2,
+        "mae":              mae,
+        "aic":              float(aic),
+        "optimal_n_fn":     optimal_n_fn,
+        "predict_fn":       lambda N: _power_law(np.array(N), a, b, alpha),
+        # hierarchical extras
+        "fit_type":         "hierarchical",
+        "prior_alpha_mean": prior_alpha_mean,
+        "prior_alpha_std":  prior_alpha_std,
+        "lambda_used":      round(lam, 4),
+        "sigma_posterior":  round(float(sigma_post), 4),
+        "alpha_ci_lower":   round(float(alpha_ci_lower), 4),
+        "alpha_ci_upper":   round(float(alpha_ci_upper), 4),
+    }

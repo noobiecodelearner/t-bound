@@ -7,12 +7,13 @@ Two sweep types:
 Training budget: num_steps (not epochs). Epochs derived per run.
 """
 
+import csv
 import math
 import time
 import torch
 import numpy as np
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from data.vision_loader   import load_vision
 from data.nlp_loader      import load_nlp
@@ -34,20 +35,79 @@ class ScalingRunner:
     Usage:
         runner = ScalingRunner(config, device="cuda", verbose=True)
         runner.run()
+
+        # Resume after crash — skips already-completed runs:
+        runner = ScalingRunner(config, device="cuda", verbose=True, resume=True)
+        runner.run()
     """
 
     def __init__(self, config: Dict, device: str = "cpu",
                  verbose: bool = False,
-                 results_dir: str = "results"):
+                 results_dir: str = "results",
+                 resume: bool = False):
         self.cfg     = config
         self.device  = device
         self.verbose = verbose
+        self.resume  = resume
         self.logger  = ExperimentLogger(
             results_dir=results_dir,
             source="internal",
             project_id=f"{config['domain']}_{config['dataset']}",
         )
         self.gen_detector = GeneralizationWarningDetector()
+        self._completed   = self._load_completed_runs() if resume else set()
+
+    def _load_completed_runs(self) -> Set[Tuple]:
+        """Read runs.csv and return set of (dataset_fraction, params, learning_rate)
+        tuples already logged for this project and sweep_type.
+        """
+        project_id = f"{self.cfg['domain']}_{self.cfg['dataset']}"
+        runs_path  = Path(self.logger.path)
+
+        if not runs_path.exists():
+            print("  [resume] No runs.csv found. Starting from scratch.", flush=True)
+            return set()
+
+        completed = set()
+        with open(runs_path, "r", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row.get("project_id") != project_id:
+                    continue
+                if row.get("sweep_type") != self.cfg.get("sweep_type"):
+                    continue
+                try:
+                    d_frac = round(float(row["dataset_fraction"]), 6)
+                    lr     = round(float(row["learning_rate"]), 8)
+                    params = int(row["params"])
+                    completed.add((d_frac, params, lr))
+                except (KeyError, ValueError):
+                    continue
+
+        if completed:
+            print(f"  [resume] Found {len(completed)} completed runs. "
+                  f"Skipping them.", flush=True)
+        else:
+            print("  [resume] No completed runs found for this config. "
+                  "Starting from scratch.", flush=True)
+        return completed
+
+    def _already_done(self, dataset_fraction: float, scale,
+                      learning_rate: float) -> bool:
+        """Check if (D, scale, lr) was already logged.
+
+        Matches on (dataset_fraction, params, learning_rate) because
+        params is what gets written to runs.csv, not the raw scale value.
+        Builds a temporary model to get param count — cheap, no data needed.
+        """
+        if not self._completed:
+            return False
+        try:
+            _, params, _ = self._build_model(scale, n_train=1)
+        except Exception:
+            return False
+        key = (round(dataset_fraction, 6), params, round(learning_rate, 8))
+        return key in self._completed
 
     # ── public entry point ────────────────────────────────────────────────────
 
@@ -65,7 +125,7 @@ class ScalingRunner:
 
     def _run_n_d_lr_grid(self):
         """
-        Primary sweep: 6 N × 6 D × 6 lr = 216 runs per dataset.
+        Primary sweep: 6 N x 6 D x 6 lr = 216 runs per dataset.
         Fixed batch = fixed_batch from config.
         Training budget = num_steps from config.
         """
@@ -75,19 +135,31 @@ class ScalingRunner:
         fixed_batch    = self.cfg["fixed_batch"]
         num_steps      = self.cfg["num_steps"]
 
-        total = len(dataset_sizes) * len(model_scales) * len(lr_values)
-        done  = 0
+        total   = len(dataset_sizes) * len(model_scales) * len(lr_values)
+        done    = 0
+        skipped = 0
 
         print(f"\n[t-bound] n_d_lr_grid: {self.cfg['dataset']} "
-              f"— {total} runs")
+              f"— {total} runs", flush=True)
+        if self.resume:
+            print(f"  [resume] Mode active. Already completed: "
+                  f"{len(self._completed)} runs.", flush=True)
 
         for d_frac in dataset_sizes:
             for scale in model_scales:
                 for lr in lr_values:
                     done += 1
+
+                    if self.resume and self._already_done(d_frac, scale, lr):
+                        skipped += 1
+                        if self.verbose:
+                            print(f"  [{done}/{total}] D={d_frac:.2f} "
+                                  f"scale={scale} lr={lr:.5f}  SKIP")
+                        continue
+
                     if self.verbose:
                         print(f"  [{done}/{total}] D={d_frac:.2f} "
-                              f"scale={scale} lr={lr:.5f}")
+                              f"scale={scale} lr={lr:.5f}", flush=True)
                     set_seed(42)
                     self._run_single(
                         scale=scale,
@@ -98,11 +170,15 @@ class ScalingRunner:
                         sweep_type="n_d_lr_grid",
                     )
 
+        if self.resume and skipped:
+            print(f"\n  [resume] Skipped {skipped} already-completed runs. "
+                  f"Ran {done - skipped} new runs.", flush=True)
+
     # ── batch_grid ────────────────────────────────────────────────────────────
 
     def _run_batch_grid(self):
         """
-        Batch sweep: 6 batch × 3 D fractions = 18 runs per dataset.
+        Batch sweep: 6 batch x 3 D fractions = 18 runs per dataset.
         Fixed N* and lr* from config (filled in after n_d_lr_grid).
         """
         n_star     = self.cfg.get("fixed_n_star")
@@ -117,20 +193,30 @@ class ScalingRunner:
         dataset_sizes = self.cfg["dataset_sizes"]
         num_steps     = self.cfg["num_steps"]
 
-        # find the model scale closest to n_star
         scale_for_n_star = self._find_scale_for_n_star(float(n_star))
 
-        total = len(batch_values) * len(dataset_sizes)
-        done  = 0
+        total   = len(batch_values) * len(dataset_sizes)
+        done    = 0
+        skipped = 0
 
         print(f"\n[t-bound] batch_grid: {self.cfg['dataset']} "
-              f"— {total} runs at N*≈{n_star}")
+              f"— {total} runs at N*~{n_star}", flush=True)
 
         for batch in batch_values:
             for d_frac in dataset_sizes:
                 done += 1
+
+                if self.resume and self._already_done(d_frac, scale_for_n_star,
+                                                       float(lr_star)):
+                    skipped += 1
+                    if self.verbose:
+                        print(f"  [{done}/{total}] batch={batch} "
+                              f"D={d_frac:.2f}  SKIP")
+                    continue
+
                 if self.verbose:
-                    print(f"  [{done}/{total}] batch={batch} D={d_frac:.2f}")
+                    print(f"  [{done}/{total}] batch={batch} "
+                          f"D={d_frac:.2f}", flush=True)
                 set_seed(42)
                 self._run_single(
                     scale=scale_for_n_star,
@@ -140,6 +226,10 @@ class ScalingRunner:
                     num_steps=num_steps,
                     sweep_type="batch_grid",
                 )
+
+        if self.resume and skipped:
+            print(f"\n  [resume] Skipped {skipped} already-completed runs. "
+                  f"Ran {done - skipped} new runs.", flush=True)
 
     # ── single training run ───────────────────────────────────────────────────
 
@@ -206,8 +296,8 @@ class ScalingRunner:
         )
 
         if self.verbose:
-            print(f"    → params={params:,} val_acc={result['best_val_accuracy']:.4f} "
-                  f"gap={warning}")
+            print(f"    -> params={params:,} val_acc={result['best_val_accuracy']:.4f} "
+                  f"gap={warning}", flush=True)
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
@@ -249,13 +339,11 @@ class ScalingRunner:
         nc     = self.cfg["num_classes"]
 
         if domain == "vision":
-            # scale is a float: width_multiplier
             model = ScalableCNN(num_classes=nc, width_multiplier=float(scale))
             params = model.count_parameters()
             flops  = model.estimate_flops()
 
         elif domain == "nlp":
-            # scale is a list [num_layers, d_model]
             num_layers, d_model = int(scale[0]), int(scale[1])
             model = ScalableTransformer(
                 num_classes=nc, num_layers=num_layers, d_model=d_model
@@ -264,7 +352,6 @@ class ScalingRunner:
             flops  = model.estimate_flops()
 
         elif domain == "tabular":
-            # scale is an int: hidden_size
             input_dim = getattr(self, "_last_input_dim",
                                 self.cfg.get("input_dim", 54))
             model = ScalableMLP(

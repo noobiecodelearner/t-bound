@@ -142,9 +142,25 @@ class ScaleOptimizer:
 
         ci = self.bootstrap.compute_ci(params_arr, acc_arr, _fit_fn, _opt_fn)
 
-        # compute savings vs training at 2×N*
-        naive_n = n_star * 2
-        compute_saved = max(0.0, 1.0 - (n_star / naive_n))
+        # compute savings vs domain-appropriate baseline
+        # NLP:     Chinchilla D/20  (derived for transformers on text)
+        # Vision:  D/10             (empirically, vision needs more params per sample)
+        # Tabular: max params in grid (Chinchilla ratio doesn't apply to MLPs)
+        full_d  = self._df["dataset_size"].max()
+        domain  = self._df["domain"].iloc[0] if "domain" in self._df.columns else "unknown"
+
+        if domain == "nlp":
+            baseline_n    = full_d / 20.0
+            baseline_type = "chinchilla_20"
+        elif domain == "vision":
+            baseline_n    = full_d / 10.0
+            baseline_type = "chinchilla_10"
+        else:
+            # tabular: use largest model in grid as baseline
+            baseline_n    = float(self._df["params"].max())
+            baseline_type = "largest_in_grid"
+
+        compute_saved = max(0.0, 1.0 - (n_star / baseline_n)) if baseline_n > 0 else 0.0
         # rough carbon: proportional to compute
         carbon_per_step = 0.01  # grams, rough estimate
         carbon_saved = compute_saved * n_star * carbon_per_step
@@ -160,6 +176,8 @@ class ScaleOptimizer:
             "ci_success":               ci.get("success", False),
             "confidence":               self._confidence_level(len(grid_df)),
             "compute_saved_fraction":   round(compute_saved, 4),
+            "baseline_n":               int(round(baseline_n)),
+            "baseline_type":            baseline_type,
             "carbon_saved_g":           round(carbon_saved, 2),
             "alpha":                    round(fit["alpha"], 4),
             "a":                        round(fit["a"], 4),

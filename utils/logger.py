@@ -42,7 +42,9 @@ RUNS_FIELDS = [
     "run_id", "source", "project_id", "timestamp",
     # task
     "domain", "dataset", "architecture", "num_classes",
-    "dataset_size", "dataset_fraction",
+    "dataset_size", "dataset_fraction", "full_dataset_size",
+    # dataset conditioning variables (filled by backfill_dataset_features.py)
+    "label_entropy", "class_imbalance", "input_resolution",
     # sweep
     "sweep_type",
     # variables
@@ -55,6 +57,10 @@ RUNS_FIELDS = [
     "energy_kwh", "compute_flops",
     # quality
     "generalization_gap", "gen_warning",
+    # subsampling: continuous ratio (dataset_size / full_dataset_size)
+    # 1.0 for benchmark customers (no subsampling)
+    # < 0.01 triggers CI inflation in bootstrap.py
+    "extrapolation_ratio",
 ]
 
 
@@ -126,6 +132,7 @@ PRIOR_FIELDS = [
     "sweep_type",               # model_size | lr | batch | dataset
     "n_source_curves",          # how many scaling curves contributed
     "n_source_implementations", # how many distinct architectures contributed
+    "mean_source_dataset_size", # avg dataset_size of runs that built this prior row
     # exponents — scale-invariant, transfer across customers
     "alpha_mean", "alpha_std", "alpha_min", "alpha_max",  # model size
     "beta_mean",  "beta_std",                              # lr
@@ -133,6 +140,10 @@ PRIOR_FIELDS = [
     "delta_mean", "delta_std",                             # dataset size
     # NOTE: a (ceiling) and b (coefficient) are NOT stored here
     # they are customer-specific and measurement-scale-dependent
+    # additive decomposition — alpha(arch, domain) = mu + arch_offset + domain_offset
+    "decomposition_alpha",    # predicted alpha from additive model
+    "decomposition_residual", # observed - predicted (small = transfer reliable)
+    "transfer",               # True = decomposition reliable, False = use own alpha only
     "last_updated",
 ]
 

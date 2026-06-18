@@ -79,36 +79,58 @@ def _tokenize_texts(texts, tokenizer, max_length: int = 128):
 
 
 # ── Yahoo Answers ─────────────────────────────────────────────────────────────
+# Format: parquet files (train-00000-of-00002.parquet, train-00001-of-00002.parquet,
+#                        test-00000-of-00001.parquet)
+# Columns: id, topic, question_title, question_content, best_answer
+# Labels:  topic (0-indexed, 0-9, 10 classes)
 
 def _load_yahoo(data_path: str, tokenizer_path: str,
                 dataset_fraction: float, batch_size: int,
                 seed: int) -> Tuple:
-    cache_key = f"yahoo_{dataset_fraction}_{seed}"
-    if cache_key not in _CACHE:
-        from datasets import load_from_disk
-        ds = load_from_disk(data_path)
+    # Cache keyed by dataset name only — tokenize once, slice per run
+    if "yahoo" not in _CACHE:
+        import pandas as pd
+        from pathlib import Path
+        p = Path(data_path)
+
+        train_shards = sorted(p.glob("train-*.parquet"))
+        if not train_shards:
+            raise FileNotFoundError(
+                f"No train parquet files found in {data_path}\n"
+                f"Expected: train-00000-of-*.parquet, train-00001-of-*.parquet ..."
+            )
+        train_df = pd.concat([pd.read_parquet(f) for f in train_shards],
+                             ignore_index=True)
+
+        test_shards = sorted(p.glob("test-*.parquet"))
+        if not test_shards:
+            raise FileNotFoundError(f"No test parquet files found in {data_path}")
+        test_df = pd.concat([pd.read_parquet(f) for f in test_shards],
+                            ignore_index=True)
+
         tokenizer = _get_tokenizer(tokenizer_path)
 
-        def _process(split):
-            texts = [f"{q} {a}" for q, a in
-                     zip(ds[split]["question_title"],
-                         ds[split]["best_answer"])]
-            labels = torch.tensor(ds[split]["topic"], dtype=torch.long)
+        def _process(df):
+            texts  = [f"{q} {a}" for q, a in
+                      zip(df["question_title"].tolist(),
+                          df["best_answer"].tolist())]
+            labels = torch.tensor(df["topic"].tolist(), dtype=torch.long)
             ids, mask = _tokenize_texts(texts, tokenizer)
             return ids, mask, labels
 
-        tr_ids, tr_mask, tr_lbl = _process("train")
-        _CACHE[cache_key] = {
+        tr_ids, tr_mask, tr_lbl = _process(train_df)
+        te_ids, te_mask, te_lbl = _process(test_df)
+        _CACHE["yahoo"] = {
             "train_ids": tr_ids, "train_mask": tr_mask, "train_lbl": tr_lbl,
+            "test_ids":  te_ids, "test_mask":  te_mask, "test_lbl":  te_lbl,
         }
-        te_ids, te_mask, te_lbl = _process("test")
-        _CACHE[f"yahoo_test"] = {
-            "ids": te_ids, "mask": te_mask, "lbl": te_lbl
-        }
+        print(f"  [yahoo] Cached {len(train_df):,} train + {len(test_df):,} test.", flush=True)
+    else:
+        print("  [yahoo] Using cached data.", flush=True)
 
-    c = _CACHE[cache_key]
+    c = _CACHE["yahoo"]
     train_pool_idx, val_idx = _load_val_split("yahoo")
-    n_train = int(len(train_pool_idx) * dataset_fraction)
+    n_train = max(1, int(len(train_pool_idx) * dataset_fraction))
     rng = np.random.RandomState(seed)
     chosen = rng.choice(train_pool_idx, n_train, replace=False)
 
@@ -116,43 +138,54 @@ def _load_yahoo(data_path: str, tokenizer_path: str,
         c["train_ids"], c["train_mask"], c["train_lbl"],
         chosen, val_idx, len(chosen), batch_size
     )
-    tc = _CACHE.get("yahoo_test", {})
-    test_ds = _TokenizedDataset(tc["ids"], tc["mask"], tc["lbl"])
+    test_ds = _TokenizedDataset(c["test_ids"], c["test_mask"], c["test_lbl"])
     test_loader = DataLoader(test_ds, batch_size=batch_size * 2,
                              shuffle=False, num_workers=2)
     return train_loader, val_loader, test_loader, len(chosen)
 
 
 # ── AG News ───────────────────────────────────────────────────────────────────
+# Format: CSV files (train.csv, test.csv)
+# Columns: Class Index, Title, Description
+# Labels:  Class Index (1-indexed, 1-4) → subtract 1 → (0-3, 4 classes)
 
 def _load_agnews(data_path: str, tokenizer_path: str,
                  dataset_fraction: float, batch_size: int,
                  seed: int) -> Tuple:
-    cache_key = f"agnews_{dataset_fraction}_{seed}"
-    if cache_key not in _CACHE:
-        from datasets import load_from_disk
-        ds = load_from_disk(data_path)
+    # Cache keyed by dataset name only — tokenize once, slice per run
+    if "agnews" not in _CACHE:
+        import pandas as pd
+        from pathlib import Path
+        p = Path(data_path)
+
+        train_df = pd.read_csv(p / "train.csv")
+        test_df  = pd.read_csv(p / "test.csv")
+
         tokenizer = _get_tokenizer(tokenizer_path)
 
-        def _process(split):
-            texts = [f"{t} {d}" for t, d in
-                     zip(ds[split]["title"], ds[split]["description"])]
+        def _process(df):
+            texts  = [f"{t} {d}" for t, d in
+                      zip(df["Title"].tolist(),
+                          df["Description"].tolist())]
             labels = torch.tensor(
-                [l - 1 for l in ds[split]["label"]], dtype=torch.long
+                [l - 1 for l in df["Class Index"].tolist()], dtype=torch.long
             )
             ids, mask = _tokenize_texts(texts, tokenizer)
             return ids, mask, labels
 
-        tr_ids, tr_mask, tr_lbl = _process("train")
-        _CACHE[cache_key] = {
+        tr_ids, tr_mask, tr_lbl = _process(train_df)
+        te_ids, te_mask, te_lbl = _process(test_df)
+        _CACHE["agnews"] = {
             "train_ids": tr_ids, "train_mask": tr_mask, "train_lbl": tr_lbl,
+            "test_ids":  te_ids, "test_mask":  te_mask, "test_lbl":  te_lbl,
         }
-        te_ids, te_mask, te_lbl = _process("test")
-        _CACHE["agnews_test"] = {"ids": te_ids, "mask": te_mask, "lbl": te_lbl}
+        print(f"  [agnews] Cached {len(train_df):,} train + {len(test_df):,} test.", flush=True)
+    else:
+        print("  [agnews] Using cached data.", flush=True)
 
-    c = _CACHE[cache_key]
+    c = _CACHE["agnews"]
     train_pool_idx, val_idx = _load_val_split("agnews")
-    n_train = int(len(train_pool_idx) * dataset_fraction)
+    n_train = max(1, int(len(train_pool_idx) * dataset_fraction))
     rng = np.random.RandomState(seed)
     chosen = rng.choice(train_pool_idx, n_train, replace=False)
 
@@ -160,45 +193,52 @@ def _load_agnews(data_path: str, tokenizer_path: str,
         c["train_ids"], c["train_mask"], c["train_lbl"],
         chosen, val_idx, len(chosen), batch_size
     )
-    tc = _CACHE.get("agnews_test", {})
-    test_ds = _TokenizedDataset(tc["ids"], tc["mask"], tc["lbl"])
+    test_ds = _TokenizedDataset(c["test_ids"], c["test_mask"], c["test_lbl"])
     test_loader = DataLoader(test_ds, batch_size=batch_size * 2,
                              shuffle=False, num_workers=2)
     return train_loader, val_loader, test_loader, len(chosen)
 
 
 # ── DBpedia ───────────────────────────────────────────────────────────────────
+# Format: parquet files (train.parquet, test.parquet)
+# Columns: label, title, content
+# Labels:  label (0-indexed, 0-13, 14 classes)
 
 def _load_dbpedia(data_path: str, tokenizer_path: str,
                   dataset_fraction: float, batch_size: int,
                   seed: int) -> Tuple:
-    cache_key = f"dbpedia_{dataset_fraction}_{seed}"
-    if cache_key not in _CACHE:
-        from datasets import load_from_disk
-        ds = load_from_disk(data_path)
+    # Cache keyed by dataset name only — tokenize once, slice per run
+    if "dbpedia" not in _CACHE:
+        import pandas as pd
+        from pathlib import Path
+        p = Path(data_path)
+
+        train_df = pd.read_parquet(p / "train.parquet")
+        test_df  = pd.read_parquet(p / "test.parquet")
+
         tokenizer = _get_tokenizer(tokenizer_path)
 
-        def _process(split):
-            texts = [f"{t} {c}" for t, c in
-                     zip(ds[split]["title"], ds[split]["content"])]
-            labels = torch.tensor(
-                [l - 1 for l in ds[split]["label"]], dtype=torch.long
-            )
+        def _process(df):
+            texts  = [f"{t} {c}" for t, c in
+                      zip(df["title"].tolist(),
+                          df["content"].tolist())]
+            labels = torch.tensor(df["label"].tolist(), dtype=torch.long)
             ids, mask = _tokenize_texts(texts, tokenizer)
             return ids, mask, labels
 
-        tr_ids, tr_mask, tr_lbl = _process("train")
-        _CACHE[cache_key] = {
+        tr_ids, tr_mask, tr_lbl = _process(train_df)
+        te_ids, te_mask, te_lbl = _process(test_df)
+        _CACHE["dbpedia"] = {
             "train_ids": tr_ids, "train_mask": tr_mask, "train_lbl": tr_lbl,
+            "test_ids":  te_ids, "test_mask":  te_mask, "test_lbl":  te_lbl,
         }
-        te_ids, te_mask, te_lbl = _process("test")
-        _CACHE["dbpedia_test"] = {
-            "ids": te_ids, "mask": te_mask, "lbl": te_lbl
-        }
+        print(f"  [dbpedia] Cached {len(train_df):,} train + {len(test_df):,} test.", flush=True)
+    else:
+        print("  [dbpedia] Using cached data.", flush=True)
 
-    c = _CACHE[cache_key]
+    c = _CACHE["dbpedia"]
     train_pool_idx, val_idx = _load_val_split("dbpedia")
-    n_train = int(len(train_pool_idx) * dataset_fraction)
+    n_train = max(1, int(len(train_pool_idx) * dataset_fraction))
     rng = np.random.RandomState(seed)
     chosen = rng.choice(train_pool_idx, n_train, replace=False)
 
@@ -206,8 +246,7 @@ def _load_dbpedia(data_path: str, tokenizer_path: str,
         c["train_ids"], c["train_mask"], c["train_lbl"],
         chosen, val_idx, len(chosen), batch_size
     )
-    tc = _CACHE.get("dbpedia_test", {})
-    test_ds = _TokenizedDataset(tc["ids"], tc["mask"], tc["lbl"])
+    test_ds = _TokenizedDataset(c["test_ids"], c["test_mask"], c["test_lbl"])
     test_loader = DataLoader(test_ds, batch_size=batch_size * 2,
                              shuffle=False, num_workers=2)
     return train_loader, val_loader, test_loader, len(chosen)

@@ -34,7 +34,7 @@ DATASET_CONFIGS = {
     "dbpedia":   {"n_total": 560000,  "val_fraction": 0.01},   # 5.6K val
     # tabular
     "covertype": {"n_total": 581012, "val_fraction": 0.02},    # ~11.6K val
-    "otto":      {"n_total": 61878,  "val_fraction": 0.10},    # ~6.2K val
+    "mnist_tabular": {"n_total": 70000,  "val_fraction": 0.10},   # 7K val
     "higgs":     {"n_total": 1000000,"val_fraction": 0.01},    # 10K val (from 1M subset)
 }
 
@@ -71,11 +71,16 @@ def main():
     print()
 
     for dataset_name, cfg in DATASET_CONFIGS.items():
+        out_path = OUTPUT_DIR / f"{dataset_name}_seed{SEED}.npz"
+
+        if out_path.exists():
+            print(f"  {dataset_name:12s}  SKIPPED (already exists) → {out_path.name}")
+            continue
+
         train_idx, val_idx = generate_split(
             dataset_name, cfg["n_total"], cfg["val_fraction"], SEED
         )
 
-        out_path = OUTPUT_DIR / f"{dataset_name}_seed{SEED}.npz"
         np.savez(
             out_path,
             train_idx=train_idx,

@@ -8,9 +8,9 @@ CRITICAL DESIGN RULES:
     4. Returns input_dim alongside loaders — needed to build ScalableMLP.
 
 Supported datasets:
-    covertype: Forest Cover Type, 581K samples, 7 classes,  54 features
-    otto:      Otto Group Product, 61K samples,  9 classes,  93 features
-    higgs:     HIGGS, 11M samples (use 1M), 2 classes, 28 features
+    covertype:     Forest Cover Type, 581K samples, 7 classes,  54 features
+    mnist_tabular: MNIST flattened,    70K samples, 10 classes, 784 features
+    higgs:         HIGGS, 11M samples (use 1M), 2 classes, 28 features
 """
 
 from pathlib import Path
@@ -55,11 +55,26 @@ def _make_loader(dataset: Dataset, batch_size: int, shuffle: bool) -> DataLoader
 
 
 def _build_covertype_cache(data_path: Path, seed: int) -> None:
-    from sklearn.datasets import fetch_covtype
-    print("  [covertype] Loading...", flush=True)
-    data = fetch_covtype(data_home=str(data_path))
-    X = data.data.astype(np.float32)
-    y = (data.target - 1).astype(np.int64)
+    print("  [covertype] Loading from raw files...", flush=True)
+
+    # Search for raw data file — sklearn downloads covtype.data.gz
+    candidates = (
+        list(data_path.rglob("covtype.data.gz")) +
+        list(data_path.rglob("covtype.data")) +
+        [data_path / "covtype.csv"]
+    )
+    raw_file = next((p for p in candidates if Path(p).exists()), None)
+
+    if raw_file is not None:
+        print(f"  [covertype] Reading {raw_file}", flush=True)
+        df = pd.read_csv(raw_file, header=None)
+        X = df.iloc[:, :-1].values.astype(np.float32)
+        y = (df.iloc[:, -1].values - 1).astype(np.int64)
+    else:
+        from sklearn.datasets import fetch_covtype
+        data = fetch_covtype(data_home=str(data_path), download_if_missing=False)
+        X = data.data.astype(np.float32)
+        y = (data.target - 1).astype(np.int64)
     train_pool_idx, val_idx = _load_val_split("covertype", seed)
     scaler = StandardScaler()
     scaler.fit(X[train_pool_idx])
@@ -76,25 +91,25 @@ def _build_covertype_cache(data_path: Path, seed: int) -> None:
     print(f"  [covertype] {len(y):,} samples, {X.shape[1]} features.", flush=True)
 
 
-def _build_otto_cache(data_path: Path, seed: int) -> None:
-    print("  [otto] Loading CSV...", flush=True)
-    df = pd.read_csv(data_path / "train.csv")
-    X = df.drop(columns=["id", "target"]).values.astype(np.float32)
-    y = (df["target"].str.replace("Class_", "").astype(int) - 1).values.astype(np.int64)
-    train_pool_idx, val_idx = _load_val_split("otto", seed)
+def _build_mnist_tabular_cache(data_path: Path, seed: int) -> None:
+    print("  [mnist_tabular] Loading CSV...", flush=True)
+    df = pd.read_csv(data_path / "mnist_784.csv")
+    X = df.drop(columns=["class"]).values.astype(np.float32)
+    y = df["class"].values.astype(np.int64)
+    train_pool_idx, val_idx = _load_val_split("mnist_tabular", seed)
     scaler = StandardScaler()
     scaler.fit(X[train_pool_idx])
     X_scaled = scaler.transform(X)
     all_idx = np.arange(len(y))
     pool_and_val = np.concatenate([train_pool_idx, val_idx])
     test_idx = all_idx[~np.isin(all_idx, pool_and_val)][:10_000]
-    _cache["otto"] = {
+    _cache["mnist_tabular"] = {
         "X": X_scaled, "y": y,
         "train_pool_idx": train_pool_idx,
         "val_idx": val_idx, "test_idx": test_idx,
         "input_dim": X.shape[1],
     }
-    print(f"  [otto] {len(y):,} samples, {X.shape[1]} features.", flush=True)
+    print(f"  [mnist_tabular] {len(y):,} samples, {X.shape[1]} features.", flush=True)
 
 
 def _build_higgs_cache(data_path: Path, seed: int, max_samples: int = 1_000_000) -> None:
@@ -142,6 +157,7 @@ def _make_tabular_loaders(
         _make_loader(TabularDataset(X[train_indices], y[train_indices]), batch_size, shuffle=True),
         _make_loader(TabularDataset(X[val_idx], y[val_idx]), batch_size, shuffle=False),
         _make_loader(TabularDataset(X[test_idx], y[test_idx]), batch_size, shuffle=False),
+        len(train_indices),
         c["input_dim"],
     )
 
@@ -156,7 +172,7 @@ def load_tabular(
     """Load any tabular dataset. Returns (train, val, test, input_dim).
 
     Args:
-        dataset: 'covertype' | 'otto' | 'higgs'.
+        dataset: 'covertype' | 'mnist_tabular' | 'higgs'.
         data_path: Path to raw data directory.
         dataset_fraction: Fraction of training pool to use.
         batch_size: DataLoader batch size.
@@ -166,12 +182,17 @@ def load_tabular(
         Tuple of (train_loader, val_loader, test_loader, input_dim).
     """
     data_path = Path(data_path)
-    builders = {"covertype": _build_covertype_cache,
-                "otto": _build_otto_cache,
-                "higgs": _build_higgs_cache}
+    builders = {
+        "covertype":     _build_covertype_cache,
+        "mnist_tabular": _build_mnist_tabular_cache,
+        "higgs":         _build_higgs_cache,
+    }
 
     if dataset not in builders:
-        raise ValueError(f"Unknown tabular dataset: '{dataset}'. Supported: covertype, otto, higgs.")
+        raise ValueError(
+            f"Unknown tabular dataset: '{dataset}'. "
+            f"Supported: covertype, mnist_tabular, higgs."
+        )
 
     if dataset not in _cache:
         builders[dataset](data_path, seed)
