@@ -1,0 +1,60 @@
+[t-bound) Source-Available License (Non-Commercial)
+Copyright (c) 2026 Naeem and Dayanch ("Licensors")
+
+This license applies to all code, data, and documentation in this
+repository (the "Software").
+
+## 1. Permitted use
+
+You may view, copy, modify, and distribute the Software, and use it for
+any non-commercial purpose, including personal projects, academic
+research, coursework, and internal evaluation, provided that:
+
+  a. You retain this license text and copyright notice in all copies
+     or substantial portions of the Software.
+  b. You give appropriate credit to the original authors and link back
+     to the original repository.
+  c. Any modified versions you distribute are clearly marked as modified
+     and are also distributed under this same license.
+
+## 2. Commercial use requires permission
+
+"Commercial use" means any use of the Software, in whole or in part —
+including the code, the trained model artifacts, the fitted scaling-law
+parameters, or the dataset of training runs — in a product or service
+that is sold, licensed, monetized through advertising, or otherwise
+intended to generate revenue, whether directly or indirectly.
+
+Commercial use of the Software is NOT permitted under this license. If
+you want to use this Software, or any derivative of it, for a commercial
+purpose, you must obtain a separate written agreement from the Licensors
+first. Contact the Licensors via the repository's GitHub page to discuss
+this.
+
+This restriction exists because the Licensors may build a commercial
+product based on this work in the future and are reserving that right.
+
+## 3. No warranty
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL
+THE LICENSORS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING
+FROM THE USE OF THE SOFTWARE.
+
+## 4. Termination
+
+Any use of the Software in violation of Section 2 automatically
+terminates your rights under this license. The Licensors may also choose,
+at their sole discretion, to re-license any future version of this
+Software (including this exact version) under a more permissive license
+at a later date; doing so does not retroactively change the terms that
+applied to use prior to that date.
+
+## 5. Questions
+
+This is not a standard, lawyer-vetted license template — it's a plain-
+language statement of intent: free to learn from and build on personally
+or academically, not free to commercialize without talking to us first.
+If you have a specific use case and aren't sure whether it qualifies as
+commercial, ask before assuming either way.
