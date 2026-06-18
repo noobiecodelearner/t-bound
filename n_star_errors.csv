@@ -1,0 +1,4 @@
+exponent,mean,std,cv,n_datasets,min,max,decision
+alpha,0.5864,0.2694,0.4595,13,0.3307,1.1708,"FIT PER CUSTOMER - prior is a regularizer, not a substitute"
+beta,0.3243,0.1033,0.3186,13,0.145,0.4242,"FIT PER CUSTOMER - prior is a regularizer, not a substitute"
+delta,0.1961,0.1541,0.786,13,0.01,0.5188,"FIT PER CUSTOMER - prior is a regularizer, not a substitute"

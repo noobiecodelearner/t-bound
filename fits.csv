@@ -1,0 +1,2 @@
+dataset,architecture,domain,n_runs,fraction_range,scale_range,cv_across_fracs,alpha_mean,alpha_std,frac_is_cond_var,broken_power_law,verdict,label_entropy,class_imbalance,input_resolution
+higgs,mlp,tabular,288,0.0965,1.2038,0.0881,0.5944,0.0524,True,True,conditionally_stable,0.6915,1.1231,28

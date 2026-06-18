@@ -1,0 +1,7 @@
+dataset,architecture,domain,true_n_star,predicted_n_star,target_accuracy,best_accuracy,n_star_error,verdict
+cifar10,cnn,vision,2580394,755186,0.8789,0.8968,0.7073,HIGH ERROR - investigate power law specification
+cifar100,cnn,vision,4629476,2689857,0.6511,0.6644,0.419,HIGH ERROR - investigate power law specification
+stl10,cnn,vision,4583306,1442273,0.6537,0.667,0.6853,HIGH ERROR - investigate power law specification
+covertype,mlp,tabular,1639431,628641,0.8634,0.881,0.6165,HIGH ERROR - investigate power law specification
+mnist_tabular,mlp,tabular,126538,37503,0.961,0.9806,0.7036,HIGH ERROR - investigate power law specification
+higgs,mlp,tabular,29250,10301,0.7326,0.7476,0.6478,HIGH ERROR - investigate power law specification
